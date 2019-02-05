@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -13,215 +13,44 @@ namespace FindByColumnAndRow
 {
     public static class TableSearch
     {
-        /// <summary>
-        ///     PreProcesses the image so it is ready to be searched
-        /// </summary>
-        /// <param name="image">The selected image</param>
-        /// <returns></returns>
-        private static Image<Gray, byte> PreProcessImage(Bitmap image)
-        {
-            // make image gray and resize
-            Image<Gray, byte> bw;
-
-            // invert and threshold the image
-            using (var src = new Image<Gray, byte>(image))
-            {
-                using (var grayI = src.CopyBlank())
-                {
-                    CvInvoke.BitwiseNot(src, grayI);
-                    bw = grayI.CopyBlank();
-                    CvInvoke.AdaptiveThreshold(grayI, bw, 255, AdaptiveThresholdType.MeanC, ThresholdType.Binary, 19,
-                        -2);
-                }
-            }
-
-            return bw;
-        }
 
         /// <summary>
-        ///     Extracts and returns a table with its horizontal and vertical lines
-        ///     http://answers.opencv.org/question/63847/how-to-extract-tables-from-an-image/
+        ///     This gathers all the cells but only reads the text of a requested cell.
         /// </summary>
-        /// <param name="bw"> PreProcessedImage</param>
-        /// <returns></returns>
-        private static Image<Gray, byte> ExtractTable(Image<Gray, byte> bw)
-        {
-            const int scale = 15;
-            Image<Gray, byte> mask;
-
-            // filter the image so only horizontal lines are present
-            using (var horizontal = bw.Clone())
-            {
-                var horizontalSize = horizontal.Cols / scale;
-                using (var horizontalStructure = CvInvoke.GetStructuringElement(ElementShape.Rectangle,
-                    new Size(horizontalSize, 1), new Point(-1, -1)))
-                {
-                    CvInvoke.Erode(horizontal, horizontal, horizontalStructure, new Point(-1, -1), 1,
-                        BorderType.Reflect101,
-                        default(MCvScalar));
-                    CvInvoke.Dilate(horizontal, horizontal, horizontalStructure, new Point(-1, -1), 1,
-                        BorderType.Reflect101,
-                        default(MCvScalar));
-                }
-
-                // filter the image so only vertical line are present
-                using (var vertical = bw.Clone())
-                {
-                    var verticalSize = vertical.Rows / scale;
-                    using (var verticalStructure = CvInvoke.GetStructuringElement(ElementShape.Rectangle,
-                        new Size(1, verticalSize), new Point(-1, -1)))
-                    {
-                        CvInvoke.Erode(vertical, vertical, verticalStructure, new Point(-1, -1), 1,
-                            BorderType.Reflect101,
-                            default(MCvScalar));
-                        CvInvoke.Dilate(vertical, vertical, verticalStructure, new Point(-1, -1), 1,
-                            BorderType.Reflect101,
-                            default(MCvScalar));
-                    }
-
-                    // combine horizontal and vertical lines
-                    mask = vertical + horizontal;
-                }
-            }
-
-            return mask;
-        }
-
-        /// <summary>
-        ///     Looks at the vertical and horizontal lines and makes decisions on whether they are noise or needed lines
-        /// </summary>
-        /// <param name="mask"></param>
-        /// <returns></returns>
-        private static Bitmap RemoveNoiseFromTable(Image<Gray, byte> mask)
-        {
-            Bitmap newBmpX;
-            List<LineSegment> pointListY;
-            Bitmap newBmpY;
-            using (var bitmap = mask.ToBitmap())
-            {
-                // List to hold points connecting lines on the x axis
-                var pointListX = new List<LineSegment>();
-
-                int counter;
-                for (var y = 0; y < mask.Height; y++)
-                for (var x = 0; x < mask.Width; x++)
-                {
-                    //get the pixel
-                    var color = bitmap.GetPixel(x, y);
-                    //if it is not a white pixel loop again again
-                    if (color.ToArgb() != Color.White.ToArgb()) continue;
-                    // if it is a white pixel create a new point
-                    var point1 = new Point(x, y);
-                    // continue along the x axis to find the last point
-                    for (counter = x; counter < mask.Width; counter++)
-                    {
-                        // if it is white loop again otherwise break
-                        if (bitmap.GetPixel(counter, y).ToArgb() == Color.White.ToArgb()) continue;
-                        break;
-                    }
-
-                    // create a point at the end of the line
-                    var point2 = new Point(counter, y);
-                    // add it to the list of the points connecting a line
-                    pointListX.Add(new LineSegment(point1.X, point1.Y, point2.X, point2.Y));
-                    // set the x to the end of the current line so it can look for the next one
-                    x = counter;
-                }
-
-                // create a writable bitmap to draw the x lines on
-                newBmpX = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb);
-
-                using (var g = Graphics.FromImage(newBmpX))
-                {
-                    g.DrawImage(bitmap, 0, 0);
-                }
-
-                // for each line check if it is larger than 100 pixels, if it is continue, otherwise draw a black line over the white line
-                foreach (var line in pointListX)
-                {
-                    var x1 = line.X1;
-                    var y1 = line.Y1;
-                    var x2 = line.X2;
-                    if (x2 - x1 >= 100) continue;
-                    for (var i = x1; i < x1 + (x2 - x1); i++) newBmpX.SetPixel(i, y1, Color.Black);
-                }
-
-                // List to hold points connecting lines on the y axis
-                pointListY = new List<LineSegment>();
-                for (var x = 0; x < mask.Width; x++)
-                for (var y = 0; y < mask.Height; y++)
-                {
-                    // get the color of the pixel
-                    var color = bitmap.GetPixel(x, y);
-                    //if it is not white loop again
-                    if (color.ToArgb() != Color.White.ToArgb()) continue;
-                    // if it is white create a new point at the start of the line
-                    var point1 = new Point(x, y);
-                    // continue along the y axis until the end of the line is reached
-                    for (counter = y; counter < mask.Height; counter++)
-                        // if it is not a white pixel break
-                        if (bitmap.GetPixel(x, counter).ToArgb() != Color.White.ToArgb())
-                            break;
-
-                    // create a new point at the end of the line
-                    var point2 = new Point(x, counter);
-                    // add it to the list of points connecting a line
-                    pointListY.Add(new LineSegment(point1.X, point1.Y, point2.X, point2.Y));
-                    y = counter;
-                }
-
-                // create a writable image for the y lines
-                newBmpY = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb);
-
-                using (var g = Graphics.FromImage(newBmpY))
-                {
-                    g.DrawImage(bitmap, 0, 0);
-                }
-            }
-
-            // for each line check if it is larger than 100 pixels, if it is continue otherwise draw over the line in black
-            foreach (var points in pointListY)
-            {
-                var x1 = points.X1;
-                var y1 = points.Y1;
-                var y2 = points.Y2;
-                if (y2 - y1 >= 100) continue;
-                for (var i = y1; i < y1 + (y2 - y1); i++) newBmpY.SetPixel(x1, i, Color.Black);
-            }
-
-            // combine the images
-            using (var widthPicture = new Image<Gray, byte>(newBmpX))
-            {
-                using (var heightPicture = new Image<Gray, byte>(newBmpY))
-                {
-                    return (widthPicture + heightPicture).ToBitmap();
-                }
-            }
-        }
-
-        /// <summary>
-        ///     open image and get table
-        /// </summary>
-        /// <param name="image"></param>
-        private static Bitmap GetTable(Image image)
+        /// <param name="origImage">the original image</param>
+        /// <param name="findRow">the row to find</param>
+        /// <param name="findCol">the column to find</param>
+        public static Tuple<Rectangle, string> GetRectangleAndText(Image origImage, int findCol, int findRow)
         {
             try
             {
-                Image<Gray, byte> bw;
-                // set the resolution of the image
-                using (var bitmap = new Bitmap(image))
-                {
-                    bitmap.SetResolution(300, 300);
+                var newColumnsList = GetCellsAndColumns(origImage);
 
-                    // pre process the image
-                    bw = PreProcessImage(bitmap);
+                // mark the requested column and row and set the ROI to it
+                var rowTb = findRow;
+                var colTb = findCol;
+                Rectangle rectangle;
+                Bitmap roiImage;
+
+                // find the requested cell by row and column
+                using (var image = new Image<Bgr, byte>((Bitmap)origImage))
+                {
+                    rectangle = new Rectangle();
+                    if (rowTb > 0 && colTb > 0)
+                    {
+                        var target = newColumnsList[colTb - 1];
+                        rectangle = new Rectangle(target.X, target.YList[rowTb - 1],
+                            target.Widths[rowTb - 1], target.Heights[rowTb - 1]);
+                        image.ROI = rectangle;
+                    }
+
+                    //this is the region of interest
+                    roiImage = image.ToBitmap();
                 }
 
-                // get the table
-                using (var mask = ExtractTable(bw))
-                {
-                    return RemoveNoiseFromTable(mask);
-                }
+                //this is the returned text
+
+                return new Tuple<Rectangle, string>(rectangle, ReadText(roiImage));
             }
             catch (Exception ex)
             {
@@ -231,12 +60,44 @@ namespace FindByColumnAndRow
         }
 
         /// <summary>
-        ///     Can currently find the location of most cells and columns
+        ///     This gathers all the cells and reads the text in every available cell.
         /// </summary>
-        /// <param name="origImage"></param>
-        /// <param name="findRow"></param>
-        /// <param name="findCol"></param>
-        public static Tuple<Rectangle, string> GetRectangleAndText(Image origImage, int findCol, int findRow)
+        /// <param name="origImage">the original image</param>
+        public static List<Tuple<Rectangle, string>> GetAllRectanglesAndText(Image origImage)
+        {
+            try
+            {
+                var newColumnsList = GetCellsAndColumns(origImage);
+                var list = new List<Tuple<Rectangle, string>>();
+
+                using (var image = new Image<Bgr, byte>((Bitmap)origImage))
+                {
+                    foreach (var col in newColumnsList)
+                        for (var i = 0; i < col.YList.Count; i++)
+                        {
+                            var rectangle = new Rectangle(col.X, col.YList[i],
+                                col.Widths[i], col.Heights[i]);
+                            image.ROI = rectangle;
+                            var text = ReadText(image.ToBitmap());
+                            list.Add(new Tuple<Rectangle, string>(rectangle, text));
+                        }
+                }
+
+                return list;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// This iterates over an image of an extracted table to locate all the cells and columns.
+        /// </summary>
+        /// <param name="origImage">the original image</param>
+        /// <returns></returns>
+        private static List<PointColumn> GetCellsAndColumns(Image origImage)
         {
             try
             {
@@ -461,32 +322,26 @@ namespace FindByColumnAndRow
 
                 // return all values that are not null
                 newColumnsList = newColumnsList.FindAll(i => i != null);
-
-                // mark the requested column and row and set the ROI to it
-                var rowTb = findRow;
-                var colTb = findCol;
-                Rectangle rectangle;
-                Bitmap roiImage;
-
-                // find the requested cell by row and column
-                using (var image = new Image<Bgr, byte>((Bitmap) origImage))
+                //if any points are negative delete them
+                var filteredList = new List<PointColumn>();
+                foreach (var col in newColumnsList)
                 {
-                    rectangle = new Rectangle();
-                    if (rowTb > 0 && colTb > 0)
-                    {
-                        var target = newColumnsList[colTb - 1];
-                        rectangle = new Rectangle(target.X, target.YList[rowTb - 1],
-                            target.Widths[rowTb - 1], target.Heights[rowTb - 1]);
-                        image.ROI = rectangle;
-                    }
+                    if (col.X < 0) continue;
+                    var pointColumn = new PointColumn(col.X);
+                    for (var i = 0; i < col.YList.Count; i++)
+                        if (col.YList[i] >= 0 && col.Widths[i] >= 0 && col.Heights[i] >= 0)
+                        {
+                            pointColumn.YList.Add(col.YList[i]);
+                            pointColumn.Widths.Add(col.Widths[i]);
+                            pointColumn.Heights.Add(col.Heights[i]);
+                        }
 
-                    //this is the region of interest
-                    roiImage = image.ToBitmap();
+                    filteredList.Add(pointColumn);
                 }
 
-                //this is the returned text
+                newColumnsList = filteredList;
 
-                return new Tuple<Rectangle, string>(rectangle, ReadText(roiImage));
+                return newColumnsList;
             }
             catch (Exception ex)
             {
@@ -496,7 +351,223 @@ namespace FindByColumnAndRow
         }
 
         /// <summary>
-        ///     uses a laplace filter and threshold to ready the text for reading
+        ///    Sets the resolution of the image, processes the image and gets the table.
+        /// </summary>
+        /// <param name="image">the original image</param>
+        private static Bitmap GetTable(Image image)
+        {
+            try
+            {
+                Image<Gray, byte> bw;
+                // set the resolution of the image
+                using (var bitmap = new Bitmap(image))
+                {
+                    bitmap.SetResolution(300, 300);
+
+                    // pre process the image
+                    bw = PreProcessImage(bitmap);
+                }
+
+                // get the table
+                using (var mask = ExtractTable(bw))
+                {
+                    return RemoveNoiseFromTable(mask);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        ///     Inverts the image and thresholds the image so it is ready for table extraction.
+        /// </summary>
+        /// <param name="image">The selected image</param>
+        /// <returns></returns>
+        private static Image<Gray, byte> PreProcessImage(Bitmap image)
+        {
+            // make image gray and resize
+            Image<Gray, byte> bw;
+
+            // invert and threshold the image
+            using (var src = new Image<Gray, byte>(image))
+            {
+                using (var grayI = src.CopyBlank())
+                {
+                    CvInvoke.BitwiseNot(src, grayI);
+                    bw = grayI.CopyBlank();
+                    CvInvoke.AdaptiveThreshold(grayI, bw, 255, AdaptiveThresholdType.MeanC, ThresholdType.Binary, 19, -2);
+                }
+            }
+
+            return bw;
+        }
+
+        /// <summary>
+        ///     Find the horizontal and vertical strucutres of a table and combine them. This allows you to find columns and cells.
+        ///     http://answers.opencv.org/question/63847/how-to-extract-tables-from-an-image/
+        /// </summary>
+        /// <param name="blackWhite"> PreProcessedImage</param>
+        /// <returns></returns>
+        private static Image<Gray, byte> ExtractTable(Image<Gray, byte> blackWhite)
+        {
+            const int scale = 15;
+            Image<Gray, byte> mask;
+
+            // filter the image so only horizontal lines are present
+            using (var horizontal = blackWhite.Clone())
+            {
+                var horizontalSize = horizontal.Cols / scale;
+                using (var horizontalStructure = CvInvoke.GetStructuringElement(ElementShape.Rectangle,
+                    new Size(horizontalSize, 1), new Point(-1, -1)))
+                {
+                    CvInvoke.Erode(horizontal, horizontal, horizontalStructure, new Point(-1, -1), 1,
+                        BorderType.Reflect101,
+                        default(MCvScalar));
+                    CvInvoke.Dilate(horizontal, horizontal, horizontalStructure, new Point(-1, -1), 1,
+                        BorderType.Reflect101,
+                        default(MCvScalar));
+                }
+
+                // filter the image so only vertical line are present
+                using (var vertical = blackWhite.Clone())
+                {
+                    var verticalSize = vertical.Rows / scale;
+                    using (var verticalStructure = CvInvoke.GetStructuringElement(ElementShape.Rectangle,
+                        new Size(1, verticalSize), new Point(-1, -1)))
+                    {
+                        CvInvoke.Erode(vertical, vertical, verticalStructure, new Point(-1, -1), 1,
+                            BorderType.Reflect101,
+                            default(MCvScalar));
+                        CvInvoke.Dilate(vertical, vertical, verticalStructure, new Point(-1, -1), 1,
+                            BorderType.Reflect101,
+                            default(MCvScalar));
+                    }
+
+                    // combine horizontal and vertical lines
+                    mask = vertical + horizontal;
+                }
+            }
+
+            return mask;
+        }
+
+        /// <summary>
+        ///     Looks at the table structure and removes lines that don't belong in the table.
+        /// </summary>
+        /// <param name="mask"></param>
+        /// <returns></returns>
+        private static Bitmap RemoveNoiseFromTable(Image<Gray, byte> mask)
+        {
+            Bitmap newBmpX;
+            List<LineSegment> pointListY;
+            Bitmap newBmpY;
+            using (var bitmap = mask.ToBitmap())
+            {
+                // List to hold points connecting lines on the x axis
+                var pointListX = new List<LineSegment>();
+
+                int counter;
+                for (var y = 0; y < mask.Height; y++)
+                    for (var x = 0; x < mask.Width; x++)
+                    {
+                        //get the pixel
+                        var color = bitmap.GetPixel(x, y);
+                        //if it is not a white pixel loop again again
+                        if (color.ToArgb() != Color.White.ToArgb()) continue;
+                        // if it is a white pixel create a new point
+                        var point1 = new Point(x, y);
+                        // continue along the x axis to find the last point
+                        for (counter = x; counter < mask.Width; counter++)
+                        {
+                            // if it is white loop again otherwise break
+                            if (bitmap.GetPixel(counter, y).ToArgb() == Color.White.ToArgb()) continue;
+                            break;
+                        }
+
+                        // create a point at the end of the line
+                        var point2 = new Point(counter, y);
+                        // add it to the list of the points connecting a line
+                        pointListX.Add(new LineSegment(point1.X, point1.Y, point2.X, point2.Y));
+                        // set the x to the end of the current line so it can look for the next one
+                        x = counter;
+                    }
+
+                // create a writable bitmap to draw the x lines on
+                newBmpX = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb);
+
+                using (var g = Graphics.FromImage(newBmpX))
+                {
+                    g.DrawImage(bitmap, 0, 0);
+                }
+
+                // for each line check if it is larger than 100 pixels, if it is continue, otherwise draw a black line over the white line
+                foreach (var line in pointListX)
+                {
+                    var x1 = line.X1;
+                    var y1 = line.Y1;
+                    var x2 = line.X2;
+                    if (x2 - x1 >= 100) continue;
+                    for (var i = x1; i < x1 + (x2 - x1); i++) newBmpX.SetPixel(i, y1, Color.Black);
+                }
+
+                // List to hold points connecting lines on the y axis
+                pointListY = new List<LineSegment>();
+                for (var x = 0; x < mask.Width; x++)
+                    for (var y = 0; y < mask.Height; y++)
+                    {
+                        // get the color of the pixel
+                        var color = bitmap.GetPixel(x, y);
+                        //if it is not white loop again
+                        if (color.ToArgb() != Color.White.ToArgb()) continue;
+                        // if it is white create a new point at the start of the line
+                        var point1 = new Point(x, y);
+                        // continue along the y axis until the end of the line is reached
+                        for (counter = y; counter < mask.Height; counter++)
+                            // if it is not a white pixel break
+                            if (bitmap.GetPixel(x, counter).ToArgb() != Color.White.ToArgb())
+                                break;
+
+                        // create a new point at the end of the line
+                        var point2 = new Point(x, counter);
+                        // add it to the list of points connecting a line
+                        pointListY.Add(new LineSegment(point1.X, point1.Y, point2.X, point2.Y));
+                        y = counter;
+                    }
+
+                // create a writable image for the y lines
+                newBmpY = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb);
+
+                using (var g = Graphics.FromImage(newBmpY))
+                {
+                    g.DrawImage(bitmap, 0, 0);
+                }
+            }
+
+            // for each line check if it is larger than 100 pixels, if it is continue otherwise draw over the line in black
+            foreach (var points in pointListY)
+            {
+                var x1 = points.X1;
+                var y1 = points.Y1;
+                var y2 = points.Y2;
+                if (y2 - y1 >= 100) continue;
+                for (var i = y1; i < y1 + (y2 - y1); i++) newBmpY.SetPixel(x1, i, Color.Black);
+            }
+
+            // combine the images
+            using (var widthPicture = new Image<Gray, byte>(newBmpX))
+            {
+                using (var heightPicture = new Image<Gray, byte>(newBmpY))
+                {
+                    return (widthPicture + heightPicture).ToBitmap();
+                }
+            }
+        }
+
+        /// <summary>
+        ///     Processes the image by using an edge detection filter, thresholding it, and then subtracting one from the other. Then Tesseract is used on the image to find the text.
         /// </summary>
         /// <param name="image"></param>
         /// <returns></returns>
@@ -513,8 +584,21 @@ namespace FindByColumnAndRow
                 var threshold = laplace.CopyBlank();
                 // threshold the image
                 CvInvoke.Threshold(laplace, threshold, 80, 200, ThresholdType.Binary);
-                // minus the thresholded image by the edges in the laplace filter so it is easy to find words
+                // minus the threshold image by the edges in the laplace filter so it is easy to find words
                 threshold = threshold - laplace;
+
+                //---
+                //var dialog = new SaveFileDialog
+                //{
+                //    Filter =
+                //        "Bitmap Image (*.bmp)|*.bmp|GIF Image (*.gif)|*.gif|JPG Image (*.jpg)|*.jpg|PNG Image (*.png)|*.png|All files (*.*)|*.*"
+                //};
+                //if (dialog.ShowDialog() == DialogResult.OK)
+                //{
+                //    threshold.ToBitmap().Save(dialog.FileName, ImageFormat.Bmp);
+                //}
+                //---
+
                 // use tesseract to find the words
                 using (var engine = new TesseractEngine(@"./tessdata", "eng",
                     EngineMode.TesseractAndCube))
@@ -524,6 +608,8 @@ namespace FindByColumnAndRow
                         using (var page = engine.Process(img))
                         {
                             var text = page.GetText();
+                            var textArray = text.Split('\n');
+                            text = String.Join(" ", textArray);
                             return text;
                         }
                     }
